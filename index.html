@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>ระบบข้อมูลโรงรมยาง</title>
+<script src="config.js"></script>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  body { margin:0; font-family:'Sarabun',system-ui,sans-serif; background:#F7F3E8; color:#1C2820; }
+  .boot { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; text-align:center; }
+  .spin { width:42px; height:42px; border:4px solid #C8E6C9; border-top-color:#2E7D32; border-radius:50%; animation:s 0.9s linear infinite; }
+  @keyframes s { to { transform:rotate(360deg); } }
+  .err { color:#B71C1C; background:#FDECEA; border-radius:12px; padding:12px 16px; max-width:420px; }
+  button { font:inherit; padding:12px 20px; border:0; border-radius:12px; background:#2E7D32; color:#fff; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="boot" id="boot"><div class="spin"></div><div id="bootMsg">🌿 กำลังเปิดระบบข้อมูลโรงรมยาง...</div></div>
+<script>
+(function () {
+  var C = window.APP_CONFIG || {};
+  var ID_TOKEN = null, CAN_SEND = false;
+
+  function fail(msg) {
+    document.getElementById('boot').innerHTML = '<div class="err">❌ ' + msg + '</div><button onclick="location.reload()">ลองใหม่</button>';
+  }
+
+  /* เรียก Apps Script API (POST text/plain เพื่อเลี่ยง CORS preflight) */
+  function api(action, args) {
+    return fetch(C.API_URL, {
+      method: 'POST', redirect: 'follow',
+      body: JSON.stringify({ action: action, args: args || [], idToken: ID_TOKEN, clientNotify: CAN_SEND })
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) throw new Error(j.error || 'เกิดข้อผิดพลาด');
+      return j.result;
+    });
+  }
+
+  /* จำลอง google.script.run ให้หน้าฟอร์มเดิมใช้ได้โดยไม่ต้องแก้ */
+  function runner(ok, bad) {
+    return new Proxy({}, {
+      get: function (_, k) {
+        if (k === 'withSuccessHandler') return function (f) { return runner(f, bad); };
+        if (k === 'withFailureHandler') return function (f) { return runner(ok, f); };
+        return function () {
+          var args = Array.prototype.slice.call(arguments);
+          api(k, args).then(function (r) { if (ok) ok(r); })
+            .catch(function (e) { if (bad) bad(e); else alert('❌ ' + e.message); });
+        };
+      }
+    });
+  }
+  window.google = { script: {} };
+  Object.defineProperty(window.google.script, 'run', { get: function () { return runner(null, null); } });
+
+  /* ส่งข้อความเข้าห้องแชทที่เปิดหน้านี้ ในนามผู้ใช้ (ไม่ใช้โควตาข้อความของ OA) */
+  window.__liffSend = function (text) {
+    if (!CAN_SEND) return Promise.resolve(false);
+    return liff.sendMessages([{ type: 'text', text: String(text).slice(0, 4900) }])
+      .then(function () { return true; })
+      .catch(function (e) { console.warn(e); return false; });
+  };
+
+  if (!C.LIFF_ID || /ใส่/.test(C.LIFF_ID)) return fail('ยังไม่ได้ตั้งค่า LIFF_ID ในไฟล์ config.js');
+
+  liff.init({ liffId: C.LIFF_ID }).then(function () {
+    if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+    ID_TOKEN = liff.getIDToken();
+    var ctx = liff.getContext() || {};
+    // ส่งเข้าแชทเองเฉพาะเมื่อเปิดจากไลน์กลุ่ม (ถ้าเปิดจากแชท 1:1 ให้บอทแจ้งเข้ากลุ่มแทน)
+    CAN_SEND = liff.isInClient() && ['group', 'room'].indexOf(ctx.type) >= 0;
+    var q = new URLSearchParams(location.search);
+    var base = location.origin + location.pathname;
+    document.getElementById('bootMsg').textContent = '🌿 กำลังโหลดข้อมูล...';
+    return api('page', [{ f: q.get('f') || '', m: q.get('m') || '', cat: q.get('cat') || '', base: base }]).then(function (r) {
+      document.open(); document.write(r.html); document.close();
+    });
+  }).catch(function (e) { fail(e.message || String(e)); });
+})();
+</script>
+</body>
+</html>
